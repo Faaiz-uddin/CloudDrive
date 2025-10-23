@@ -2,52 +2,73 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Http\Controllers\Controller;
-use App\Mail\OtpMail;
 use App\Models\User;
+use App\Mail\OtpMail;
+use Illuminate\Support\Str;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
     /**
-     * Register user
+     * Register a new user
      */
     public function register(Request $request)
     {
+        // Validate incoming request
         $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
+            'email' => 'required|string|email|max:255',
             'password' => 'required|string|min:8|confirmed',
         ]);
 
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'role' => 'user',
-        ]);
+        // Check if email already exists
+        if (User::where('email', $request->email)->exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Email is already registered.',
+            ], 409); // 409 Conflict
+        }
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        try {
+            // Create the user
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => Hash::make($request->password),
+                'role' => 'user',
+            ]);
 
-        return response()->json([
-            'status' => true,
-            'message' => 'User registered successfully',
-            'user' => $user,
-            'token' => $token,
-        ], 201);
+            // Create token
+            $token = $user->createToken('auth_token')->plainTextToken;
+
+            return response()->json([
+                'status' => true,
+                'message' => 'User registered successfully',
+                'user' => $user,
+                'token' => $token,
+            ], 201);
+
+        } catch (QueryException $e) {
+            // Catch any DB error
+            return response()->json([
+                'status' => false,
+                'message' => 'Something went wrong. Please try again.',
+            ], 500);
+        }
     }
 
     /**
-     * Login user with 2FA / OTP if enabled
+     * Login with optional 2FA
      */
     public function login(Request $request)
     {
-        $this->checkRateLimit($request);
+        $this->checkRateLimit($request, 'login');
 
         $request->validate([
             'email' => 'required|email',
@@ -57,19 +78,20 @@ class AuthController extends Controller
         $user = User::where('email', $request->email)->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
-            RateLimiter::hit($this->throttleKey($request));
+            RateLimiter::hit($this->throttleKey($request, 'login'));
             throw ValidationException::withMessages([
                 'email' => ['Invalid credentials.'],
             ]);
         }
 
-        RateLimiter::clear($this->throttleKey($request));
+        RateLimiter::clear($this->throttleKey($request, 'login'));
 
+        // Check if 2FA is enabled
         if (app_setting('enable_2fa')) {
             $otp = rand(100000, 999999);
             $user->update([
-                'otp' => $otp,
-                'otp_expires_at' => now()->addMinutes(5),
+                'login_otp' => $otp,
+                'login_otp_expires_at' => now()->addMinutes(5),
             ]);
 
             Mail::to($user->email)->send(new OtpMail($otp));
@@ -81,6 +103,7 @@ class AuthController extends Controller
             ]);
         }
 
+        // 2FA disabled, return token immediately
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -92,7 +115,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Verify OTP for 2FA
+     * Verify OTP for login 2FA
      */
     public function verifyOtp(Request $request)
     {
@@ -102,8 +125,8 @@ class AuthController extends Controller
         ]);
 
         $user = User::where('email', $request->email)
-            ->where('otp', $request->otp)
-            ->where('otp_expires_at', '>', now())
+            ->where('login_otp', $request->otp)
+            ->where('login_otp_expires_at', '>', now())
             ->first();
 
         if (! $user) {
@@ -113,7 +136,11 @@ class AuthController extends Controller
             ], 400);
         }
 
-        $user->update(['otp' => null, 'otp_expires_at' => null]);
+        // Clear login OTP
+        $user->update([
+            'login_otp' => null,
+            'login_otp_expires_at' => null,
+        ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
@@ -164,8 +191,8 @@ class AuthController extends Controller
 
         $otp = rand(100000, 999999);
         $user->update([
-            'otp' => $otp,
-            'otp_expires_at' => now()->addMinutes(5),
+            'password_reset_otp' => $otp,
+            'password_reset_expires_at' => now()->addMinutes(5),
         ]);
 
         Mail::to($user->email)->send(new OtpMail($otp));
@@ -188,8 +215,8 @@ class AuthController extends Controller
         ]);
 
         $user = User::where('email', $request->email)
-            ->where('otp', $request->otp)
-            ->where('otp_expires_at', '>', now())
+            ->where('password_reset_otp', $request->otp)
+            ->where('password_reset_expires_at', '>', now())
             ->first();
 
         if (! $user) {
@@ -198,25 +225,31 @@ class AuthController extends Controller
 
         $user->update([
             'password' => Hash::make($request->password),
-            'otp' => null,
-            'otp_expires_at' => null,
+            'password_reset_otp' => null,
+            'password_reset_expires_at' => null,
         ]);
 
-        return response()->json(['status' => true, 'message' => 'Password reset successful.']);
+        return response()->json([
+            'status' => true,
+            'message' => 'Password reset successful.',
+        ]);
     }
 
     /**
-     * Rate limit key
+     * Rate limit key generator
      */
-    protected function throttleKey(Request $request)
+    protected function throttleKey(Request $request, string $type = 'login')
     {
-        return Str::lower($request->input('email')).'|'.$request->ip();
+        return Str::lower($request->input('email')).'|'.$request->ip().'|'.$type;
     }
 
-    protected function checkRateLimit(Request $request)
+    /**
+     * Check rate limit
+     */
+    protected function checkRateLimit(Request $request, string $type = 'login')
     {
-        if (RateLimiter::tooManyAttempts($this->throttleKey($request), 5)) {
-            $seconds = RateLimiter::availableIn($this->throttleKey($request));
+        if (RateLimiter::tooManyAttempts($this->throttleKey($request, $type), 5)) {
+            $seconds = RateLimiter::availableIn($this->throttleKey($request, $type));
             return response()->json([
                 'status' => false,
                 'message' => "Too many attempts. Try again in {$seconds} seconds.",
