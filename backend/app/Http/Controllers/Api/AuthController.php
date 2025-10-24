@@ -86,22 +86,7 @@ class AuthController extends Controller
 
         RateLimiter::clear($this->throttleKey($request, 'login'));
 
-        // Check if 2FA is enabled
-        if (app_setting('enable_2fa')) {
-            $otp = rand(100000, 999999);
-            $user->update([
-                'login_otp' => $otp,
-                'login_otp_expires_at' => now()->addMinutes(5),
-            ]);
 
-            Mail::to($user->email)->send(new OtpMail($otp));
-
-            return response()->json([
-                'status' => true,
-                'message' => 'OTP sent to your email. Please verify.',
-                'requires_otp' => true,
-            ]);
-        }
 
         // 2FA disabled, return token immediately
         $token = $user->createToken('auth_token')->plainTextToken;

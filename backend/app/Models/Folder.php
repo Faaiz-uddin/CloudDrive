@@ -2,16 +2,20 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class Folder extends Model
 {
-    protected $fillable = ['user_id', 'parent_id', 'name'];
+    use HasFactory;
 
-    public function user()
-    {
-        return $this->belongsTo(User::class);
-    }
+    protected $fillable = [
+        'name',
+        'parent_id',
+        'user_id',
+        's3_path',
+    ];
 
     public function parent()
     {
@@ -23,8 +27,18 @@ class Folder extends Model
         return $this->hasMany(Folder::class, 'parent_id');
     }
 
-    public function documents()
+    public function user()
     {
-        return $this->hasMany(Document::class);
+        return $this->belongsTo(User::class);
+    }
+
+    // Automatically delete from S3 when folder deleted
+    protected static function booted()
+    {
+        static::deleting(function ($folder) {
+            if ($folder->s3_path && Storage::disk('s3')->exists($folder->s3_path)) {
+                Storage::disk('s3')->deleteDirectory($folder->s3_path);
+            }
+        });
     }
 }

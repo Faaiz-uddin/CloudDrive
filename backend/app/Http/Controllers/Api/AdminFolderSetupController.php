@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Folder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Auth;
 
 class AdminFolderSetupController extends Controller
 {
@@ -15,6 +16,9 @@ class AdminFolderSetupController extends Controller
      */
     public function setupStructure(Request $request)
     {
+        if (auth()->user()->role !== 'admin') {
+            return response()->json(['error' => 'Unauthorized.'], 403);
+        }
         $basePath = "company/hr-documents";
 
         // Default structure
@@ -67,6 +71,9 @@ class AdminFolderSetupController extends Controller
      */
     public function addFolder(Request $request)
     {
+        if (auth()->user()->role !== 'admin') {
+            return response()->json(['error' => 'Unauthorized.'], 403);
+        }
         $request->validate([
             'name' => 'required|string|max:100',
             'parent' => 'nullable|string',
@@ -89,7 +96,7 @@ class AdminFolderSetupController extends Controller
 
             Folder::firstOrCreate([
                 'name' => ucfirst($request->name),
-                'user_id' => null,
+                'user_id' => 1,
                 's3_path' => $newPath,
                 'parent_id' => null,
             ]);
