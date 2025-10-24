@@ -2,27 +2,17 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Document extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
-        'user_id', 'folder_id', 'name', 'path',
-        'storage_type', 'size', 'mime_type', 'uploaded_at'
+        'user_id',
+        'folder_name',
+        'file_name',
+        's3_path',
     ];
-
-    protected $casts = [
-        'uploaded_at' => 'datetime',
-        'size' => 'integer',
-    ];
-
-    public function user()
-    {
-        return $this->belongsTo(User::class);
-    }
-
-    public function folder()
-    {
-        return $this->belongsTo(Folder::class);
-    }
 }
